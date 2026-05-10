@@ -75,8 +75,9 @@ export async function generateTripAction(data: {
   }
 
   try {
-    console.log("DEBUG: Initializing GoogleGenAI...");
-    const ai = new GoogleGenAI({ apiKey });
+    console.log("DEBUG: Initializing GoogleGenAI with apiVersion: v1...");
+    // Explicitly set apiVersion to v1 to avoid v1beta issues
+    const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
 
     const prompt = `
       Generate a highly detailed travel itinerary.
@@ -89,9 +90,9 @@ export async function generateTripAction(data: {
       Ensure the activities fit the budget and the dates. Return realistic costs and durations.
     `
 
-    console.log("DEBUG: Sending request to Gemini...");
+    console.log("DEBUG: Sending request to Gemini (gemini-2.0-flash)...");
     const response = await ai.models.generateContent({ 
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -116,7 +117,27 @@ export async function generateTripAction(data: {
     
   } catch (error: any) {
     console.error("CRITICAL AI ERROR:", error);
-    if (error.stack) console.error(error.stack);
+    // If 2.0 flash is not available, try 1.5 flash with v1
+    if (error.message?.includes("not found")) {
+        console.log("DEBUG: gemini-2.0-flash not found, falling back to gemini-1.5-flash...");
+        try {
+            const aiFallback = new GoogleGenAI({ apiKey, apiVersion: 'v1' });
+            const responseFallback = await aiFallback.models.generateContent({ 
+                model: "gemini-1.5-flash",
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: tripSchema,
+                }
+            });
+            const textFallback = responseFallback.text();
+            const tripDataFallback = JSON.parse(textFallback || "{}");
+            return await saveTripToMySQL(userId, data, tripDataFallback);
+        } catch (innerError: any) {
+            console.error("CRITICAL FALLBACK ERROR:", innerError);
+            throw new Error(`AI Generation failed: ${innerError.message || "Unknown error"}`)
+        }
+    }
     throw new Error(`AI Generation failed: ${error.message || "Unknown error"}`)
   }
 }
